@@ -17,12 +17,88 @@ for pkg in unzip zip curl wget rclone; do
     fi
 done
 
+# ============================================================
+# 💥 GOOGLE DRIVE DOWNLOAD FUNCTION (FIXED FOR 2024-2026)
+# ============================================================
+gdrive_download() {
+    local FILE_ID="$1"
+    local OUTPUT_PATH="$2"
+    
+    echo -e "${YELLOW}[*] Method 1: Direct cURL with confirm=t ...${RESET}"
+    sudo curl -L -o "$OUTPUT_PATH" \
+        "https://drive.google.com/uc?export=download&confirm=t&id=$FILE_ID"
+    
+    # Check if downloaded file is a valid ZIP
+    if unzip -t "$OUTPUT_PATH" &> /dev/null; then
+        echo -e "${GREEN}[+] Download Successful (cURL method)!${RESET}"
+        return 0
+    fi
+    
+    echo -e "${YELLOW}[*] Method 1 failed. Trying Method 2: gdown ...${RESET}"
+    
+    # Install gdown if not available
+    if ! command -v gdown &> /dev/null; then
+        echo -e "${YELLOW}[*] Installing gdown...${RESET}"
+        pip3 install gdown --break-system-packages -q 2>/dev/null || pip install gdown -q 2>/dev/null
+    fi
+    
+    if command -v gdown &> /dev/null; then
+        sudo rm -f "$OUTPUT_PATH"
+        gdown "https://drive.google.com/uc?id=$FILE_ID" -O "$OUTPUT_PATH" --fuzzy
+        
+        if unzip -t "$OUTPUT_PATH" &> /dev/null; then
+            echo -e "${GREEN}[+] Download Successful (gdown method)!${RESET}"
+            return 0
+        fi
+    fi
+    
+    echo -e "${YELLOW}[*] Method 2 failed. Trying Method 3: wget with cookies ...${RESET}"
+    sudo rm -f "$OUTPUT_PATH" /tmp/gdrive_cookies.txt
+    wget --quiet --save-cookies /tmp/gdrive_cookies.txt --keep-session-cookies \
+        --no-check-certificate \
+        "https://drive.google.com/uc?export=download&id=$FILE_ID" -O /tmp/gdrive_temp_page
+    
+    CONFIRM_CODE=$(cat /tmp/gdrive_temp_page | grep -oP 'confirm=([0-9a-zA-Z_-]+)' | head -1 | cut -d= -f2)
+    UUID_CODE=$(cat /tmp/gdrive_temp_page | grep -oP 'uuid=([0-9a-zA-Z_-]+)' | head -1 | cut -d= -f2)
+    
+    if [ -n "$UUID_CODE" ]; then
+        wget --load-cookies /tmp/gdrive_cookies.txt --no-check-certificate \
+            "https://drive.google.com/uc?export=download&id=$FILE_ID&confirm=t&uuid=$UUID_CODE" \
+            -O "$OUTPUT_PATH"
+    elif [ -n "$CONFIRM_CODE" ]; then
+        wget --load-cookies /tmp/gdrive_cookies.txt --no-check-certificate \
+            "https://drive.google.com/uc?export=download&confirm=$CONFIRM_CODE&id=$FILE_ID" \
+            -O "$OUTPUT_PATH"
+    else
+        wget --load-cookies /tmp/gdrive_cookies.txt --no-check-certificate \
+            "https://drive.google.com/uc?export=download&confirm=t&id=$FILE_ID" \
+            -O "$OUTPUT_PATH"
+    fi
+    
+    sudo rm -f /tmp/gdrive_cookies.txt /tmp/gdrive_temp_page
+    
+    if unzip -t "$OUTPUT_PATH" &> /dev/null; then
+        echo -e "${GREEN}[+] Download Successful (wget method)!${RESET}"
+        return 0
+    fi
+    
+    # ALL methods failed
+    echo -e "${RED}[-] ERROR: All download methods failed!${RESET}"
+    echo -e "${YELLOW}👉 Possible reasons:${RESET}"
+    echo -e "${YELLOW}   1. GDrive link sharing is NOT set to 'Anyone with the link'${RESET}"
+    echo -e "${YELLOW}   2. File is too large (try splitting the ZIP)${RESET}"
+    echo -e "${YELLOW}   3. Google rate-limited your server IP${RESET}"
+    echo -e "${YELLOW}   4. File is not a ZIP archive${RESET}"
+    sudo rm -f "$OUTPUT_PATH"
+    return 1
+}
+
 while true; do
     clear
     echo -e "${YELLOW}=====================================================${RESET}"
     echo -e "${MAGENTA}                👑 MADE BY PRODIP 👑                ${RESET}"
     echo -e "${YELLOW}=====================================================${RESET}"
-    echo -e "${GREEN}      🌟 SAAS SERVER MANAGEMENT MASTER V5.2 🌟      ${RESET}"
+    echo -e "${GREEN}      🌟 SAAS SERVER MANAGEMENT MASTER V5.3 🌟      ${RESET}"
     echo -e "${BLUE}=====================================================${RESET}"
     echo -e "${CYAN}1) 🛠️  INITIAL SETUP (Apache, PHP, MySQL, Permissions)${RESET}"
     echo -e "${CYAN}2) 🌐 SETUP DOMAIN (Link Domain to a Project)${RESET}"
@@ -49,13 +125,16 @@ while true; do
         1)
             echo -e "\n${YELLOW}[*] INITIAL SERVER SETUP (Auto Install & Fix Permissions)...${RESET}"
             sudo apt update -y
-            sudo apt install apache2 mysql-server php libapache2-mod-php php-mysql zip unzip curl wget -y
+            sudo apt install apache2 mysql-server php libapache2-mod-php php-mysql zip unzip curl wget python3-pip -y
             sudo mysql -e "CREATE USER IF NOT EXISTS 'admin'@'localhost' IDENTIFIED WITH mysql_native_password BY '12345'; GRANT ALL PRIVILEGES ON *.* TO 'admin'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;"
             sudo a2enmod rewrite
             
             sudo usermod -aG www-data $USER
             sudo chown -R $USER:www-data /var/www/html/
             sudo chmod -R 775 /var/www/html/
+            
+            # Pre-install gdown for reliable GDrive downloads
+            pip3 install gdown --break-system-packages -q 2>/dev/null
             
             sudo systemctl restart apache2
             echo -e "${GREEN}[+] Setup Complete! Server ready & Permissions Fixed.${RESET}"
@@ -112,24 +191,10 @@ EOF
                 NEW_DIR=$(echo "$NEW_DIR" | tr -d ' ')
                 sudo mkdir -p /var/www/html/$NEW_DIR
                 
-                echo -e "${GREEN}[*] Downloading Project (Bypassing GDrive Warning with cURL)...${RESET}"
+                echo -e "${GREEN}[*] Downloading Project from Google Drive...${RESET}"
                 
-                # 💥 NEW cURL GOOGLE DRIVE BYPASS (100% Reliable)
-                sudo rm -f /tmp/cookies.txt /tmp/temp_proj.zip
-                CONFIRM=$(curl -s -c /tmp/cookies.txt "https://drive.google.com/uc?export=download&id=$FILE_ID" | grep -o 'confirm=[a-zA-Z0-9_-]*' | cut -d= -f2 | head -n 1)
-                
-                if [ -n "$CONFIRM" ]; then
-                    sudo curl -L -b /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID" -o /tmp/temp_proj.zip
-                else
-                    sudo curl -L "https://drive.google.com/uc?export=download&id=$FILE_ID" -o /tmp/temp_proj.zip
-                fi
-                sudo rm -f /tmp/cookies.txt
-                
-                # 💥 SAFETY CHECK
-                if ! unzip -t /tmp/temp_proj.zip &> /dev/null; then
-                    echo -e "${RED}[-] ERROR: Download failed! Google Drive blocked the file or it's not a ZIP.${RESET}"
-                    echo -e "${YELLOW}👉 Make sure your GDrive link sharing is set to 'Anyone with the link can view'.${RESET}"
-                    sudo rm -f /tmp/temp_proj.zip
+                # 💥 FIXED: Use new reliable download function
+                if ! gdrive_download "$FILE_ID" "/tmp/temp_proj.zip"; then
                     read -p "Press Enter to return..."
                     continue
                 fi
@@ -526,21 +591,10 @@ EOF
                 read -p "Enter Target Project Folder (e.g. codexaum): " NEW_DIR
                 sudo mkdir -p /var/www/html/$NEW_DIR
                 
-                echo -e "${GREEN}[*] Downloading Large Backup from GDrive (cURL Bypass)...${RESET}"
+                echo -e "${GREEN}[*] Downloading Backup from Google Drive...${RESET}"
                 
-                sudo rm -f /tmp/cookies.txt /tmp/disaster_recovery.zip
-                CONFIRM=$(curl -s -c /tmp/cookies.txt "https://drive.google.com/uc?export=download&id=$FILE_ID" | grep -o 'confirm=[a-zA-Z0-9_-]*' | cut -d= -f2 | head -n 1)
-                
-                if [ -n "$CONFIRM" ]; then
-                    sudo curl -L -b /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID" -o /tmp/disaster_recovery.zip
-                else
-                    sudo curl -L "https://drive.google.com/uc?export=download&id=$FILE_ID" -o /tmp/disaster_recovery.zip
-                fi
-                sudo rm -f /tmp/cookies.txt
-                
-                if ! unzip -t /tmp/disaster_recovery.zip &> /dev/null; then
-                    echo -e "${RED}[-] ERROR: Download failed! Link must be 'Anyone with the link can view'.${RESET}"
-                    sudo rm -f /tmp/disaster_recovery.zip
+                # 💥 FIXED: Use new reliable download function
+                if ! gdrive_download "$FILE_ID" "/tmp/disaster_recovery.zip"; then
                     read -p "Press Enter to return..."
                     continue
                 fi
