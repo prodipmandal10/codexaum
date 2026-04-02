@@ -22,7 +22,7 @@ while true; do
     echo -e "${YELLOW}=====================================================${RESET}"
     echo -e "${MAGENTA}                👑 MADE BY PRODIP 👑                ${RESET}"
     echo -e "${YELLOW}=====================================================${RESET}"
-    echo -e "${GREEN}      🌟 SAAS SERVER MANAGEMENT MASTER V5.1 🌟      ${RESET}"
+    echo -e "${GREEN}      🌟 SAAS SERVER MANAGEMENT MASTER V5.2 🌟      ${RESET}"
     echo -e "${BLUE}=====================================================${RESET}"
     echo -e "${CYAN}1) 🛠️  INITIAL SETUP (Apache, PHP, MySQL, Permissions)${RESET}"
     echo -e "${CYAN}2) 🌐 SETUP DOMAIN (Link Domain to a Project)${RESET}"
@@ -112,17 +112,18 @@ EOF
                 NEW_DIR=$(echo "$NEW_DIR" | tr -d ' ')
                 sudo mkdir -p /var/www/html/$NEW_DIR
                 
-                echo -e "${GREEN}[*] Downloading Project (Bypassing GDrive Warning)...${RESET}"
+                echo -e "${GREEN}[*] Downloading Project (Bypassing GDrive Warning with cURL)...${RESET}"
                 
-                # 💥 MAGIC FIX FOR GOOGLE DRIVE LARGE FILES
-                sudo wget -q --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p' > /tmp/confirm.txt
-                CONFIRM=$(cat /tmp/confirm.txt)
+                # 💥 NEW cURL GOOGLE DRIVE BYPASS (100% Reliable)
+                sudo rm -f /tmp/cookies.txt /tmp/temp_proj.zip
+                CONFIRM=$(curl -s -c /tmp/cookies.txt "https://drive.google.com/uc?export=download&id=$FILE_ID" | grep -o 'confirm=[a-zA-Z0-9_-]*' | cut -d= -f2 | head -n 1)
+                
                 if [ -n "$CONFIRM" ]; then
-                    sudo wget -q --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID" -O /tmp/temp_proj.zip
+                    sudo curl -L -b /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID" -o /tmp/temp_proj.zip
                 else
-                    sudo wget -q --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O /tmp/temp_proj.zip
+                    sudo curl -L "https://drive.google.com/uc?export=download&id=$FILE_ID" -o /tmp/temp_proj.zip
                 fi
-                sudo rm -f /tmp/cookies.txt /tmp/confirm.txt
+                sudo rm -f /tmp/cookies.txt
                 
                 # 💥 SAFETY CHECK
                 if ! unzip -t /tmp/temp_proj.zip &> /dev/null; then
@@ -525,15 +526,17 @@ EOF
                 read -p "Enter Target Project Folder (e.g. codexaum): " NEW_DIR
                 sudo mkdir -p /var/www/html/$NEW_DIR
                 
-                echo -e "${GREEN}[*] Downloading Large Backup from GDrive...${RESET}"
-                sudo wget -q --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p' > /tmp/confirm.txt
-                CONFIRM=$(cat /tmp/confirm.txt)
+                echo -e "${GREEN}[*] Downloading Large Backup from GDrive (cURL Bypass)...${RESET}"
+                
+                sudo rm -f /tmp/cookies.txt /tmp/disaster_recovery.zip
+                CONFIRM=$(curl -s -c /tmp/cookies.txt "https://drive.google.com/uc?export=download&id=$FILE_ID" | grep -o 'confirm=[a-zA-Z0-9_-]*' | cut -d= -f2 | head -n 1)
+                
                 if [ -n "$CONFIRM" ]; then
-                    sudo wget -q --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID" -O /tmp/disaster_recovery.zip
+                    sudo curl -L -b /tmp/cookies.txt "https://drive.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID" -o /tmp/disaster_recovery.zip
                 else
-                    sudo wget -q --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O /tmp/disaster_recovery.zip
+                    sudo curl -L "https://drive.google.com/uc?export=download&id=$FILE_ID" -o /tmp/disaster_recovery.zip
                 fi
-                sudo rm -f /tmp/cookies.txt /tmp/confirm.txt
+                sudo rm -f /tmp/cookies.txt
                 
                 if ! unzip -t /tmp/disaster_recovery.zip &> /dev/null; then
                     echo -e "${RED}[-] ERROR: Download failed! Link must be 'Anyone with the link can view'.${RESET}"
