@@ -10,7 +10,7 @@ MAGENTA="\e[35m"
 RESET="\e[0m"
 
 # Auto Install basic requirements silently if missing
-for pkg in unzip zip curl wget; do
+for pkg in unzip zip curl wget rclone; do
     if ! command -v $pkg &> /dev/null; then
         echo -e "${YELLOW}[*] Installing missing package: $pkg...${RESET}"
         sudo apt-get install $pkg -y > /dev/null 2>&1
@@ -22,7 +22,7 @@ while true; do
     echo -e "${YELLOW}=====================================================${RESET}"
     echo -e "${MAGENTA}                👑 MADE BY PRODIP 👑                ${RESET}"
     echo -e "${YELLOW}=====================================================${RESET}"
-    echo -e "${GREEN}      🌟 SAAS SERVER MANAGEMENT MASTER V4.0 🌟      ${RESET}"
+    echo -e "${GREEN}      🌟 SAAS SERVER MANAGEMENT MASTER V5.1 🌟      ${RESET}"
     echo -e "${BLUE}=====================================================${RESET}"
     echo -e "${CYAN}1) 🛠️  INITIAL SETUP (Apache, PHP, MySQL, Permissions)${RESET}"
     echo -e "${CYAN}2) 🌐 SETUP DOMAIN (Link Domain to a Project)${RESET}"
@@ -39,7 +39,7 @@ while true; do
     echo -e "${MAGENTA}12) 🔑 CHANGE DB ADMIN PASSWORD (Live)${RESET}"
     echo -e "${YELLOW}13) 📝 FILE EXPLORER & EDITOR (Live Code Edit)${RESET}"
     echo -e "${CYAN}14) 🗄️  MYSQL DB MANAGER (Tree View, Create & Drop)${RESET}"
-    echo -e "${MAGENTA}15) ☁️  AUTO DB RESTORE (Fresh OR Merge/Update)${RESET}"
+    echo -e "${RED}15) 🚑 DISASTER RECOVERY (1-Click Full Server Restore)${RESET}"
     echo -e "${GREEN}16) 🕵️‍♂️  DB CREDENTIAL FINDER (Smart Search)${RESET}"
     echo -e "${RED}0) ❌ EXIT${RESET}"
     echo -e "${BLUE}=====================================================${RESET}"
@@ -53,7 +53,6 @@ while true; do
             sudo mysql -e "CREATE USER IF NOT EXISTS 'admin'@'localhost' IDENTIFIED WITH mysql_native_password BY '12345'; GRANT ALL PRIVILEGES ON *.* TO 'admin'@'localhost' WITH GRANT OPTION; FLUSH PRIVILEGES;"
             sudo a2enmod rewrite
             
-            # Local PC Permission Fix (Allows editing without sudo)
             sudo usermod -aG www-data $USER
             sudo chown -R $USER:www-data /var/www/html/
             sudo chmod -R 775 /var/www/html/
@@ -107,23 +106,43 @@ EOF
             echo -e "\n${YELLOW}[*] INSTALL SAAS PROJECT AUTO (With DB Auto-Detect & Perm Fix)${RESET}"
             read -p "Enter Google Drive Share Link (ZIP File): " LINK
             FILE_ID=$(echo "$LINK" | sed -E 's/.*\/d\/([a-zA-Z0-9_-]+).*/\1/')
+            
             if [ -n "$FILE_ID" ]; then
                 read -p "Enter NEW folder name for SaaS: " NEW_DIR
                 NEW_DIR=$(echo "$NEW_DIR" | tr -d ' ')
                 sudo mkdir -p /var/www/html/$NEW_DIR
-                echo -e "${GREEN}[*] Downloading and Extracting Project...${RESET}"
-                sudo wget -qO /tmp/temp_proj.zip "https://drive.google.com/uc?export=download&id=$FILE_ID"
-                sudo unzip -o /tmp/temp_proj.zip -d /var/www/html/$NEW_DIR
+                
+                echo -e "${GREEN}[*] Downloading Project (Bypassing GDrive Warning)...${RESET}"
+                
+                # 💥 MAGIC FIX FOR GOOGLE DRIVE LARGE FILES
+                sudo wget -q --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p' > /tmp/confirm.txt
+                CONFIRM=$(cat /tmp/confirm.txt)
+                if [ -n "$CONFIRM" ]; then
+                    sudo wget -q --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID" -O /tmp/temp_proj.zip
+                else
+                    sudo wget -q --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O /tmp/temp_proj.zip
+                fi
+                sudo rm -f /tmp/cookies.txt /tmp/confirm.txt
+                
+                # 💥 SAFETY CHECK
+                if ! unzip -t /tmp/temp_proj.zip &> /dev/null; then
+                    echo -e "${RED}[-] ERROR: Download failed! Google Drive blocked the file or it's not a ZIP.${RESET}"
+                    echo -e "${YELLOW}👉 Make sure your GDrive link sharing is set to 'Anyone with the link can view'.${RESET}"
+                    sudo rm -f /tmp/temp_proj.zip
+                    read -p "Press Enter to return..."
+                    continue
+                fi
+
+                echo -e "${GREEN}[*] Extracting ZIP file...${RESET}"
+                sudo unzip -q -o /tmp/temp_proj.zip -d /var/www/html/$NEW_DIR
                 sudo rm /tmp/temp_proj.zip
                 
-                # SaaS Local Permission Fix
                 sudo chown -R $USER:www-data /var/www/html/$NEW_DIR
                 sudo chmod -R 775 /var/www/html/$NEW_DIR
                 
-                # MAGIC: AUTO DETECT DB NAME BEFORE IMPORT
+                # AUTO DETECT DB
                 if [ -f "/var/www/html/$NEW_DIR/database_backup.sql" ]; then
-                    echo -e "\n${YELLOW}[*] SQL Database file found! Scanning code for configured Database Name...${RESET}"
-                    
+                    echo -e "\n${YELLOW}[*] SQL file found! Scanning for DB Name...${RESET}"
                     DETECTED_DB=""
                     FOUND_FILES=$(find /var/www/html/$NEW_DIR -type f \( -name "*.php" -o -name "*.env" \) 2>/dev/null)
                     if [ -n "$FOUND_FILES" ]; then
@@ -131,7 +150,6 @@ EOF
                             TEMP_DB=$(grep -iP '^\s*\$(dbname|db_name|database|db)\s*=\s*' "$FILE" | grep -oP "(?<=[\"'])[^\"']+(?=[\"'])" | grep -v "^$" | tail -1)
                             [ -z "$TEMP_DB" ] && TEMP_DB=$(grep -iP "define\s*\(\s*[\"']DB_NAME[\"']" "$FILE" | grep -oP "(?<=[\"'])[^\"']+(?=[\"'])" | tail -1)
                             [ -z "$TEMP_DB" ] && TEMP_DB=$(grep -iE "^DB_NAME\s*=|^DB_DATABASE\s*=" "$FILE" | cut -d'=' -f2 | tr -d "\"' " | tail -1)
-                            
                             if [ -z "$TEMP_DB" ]; then
                                 MYSQLI_LINE=$(grep -iP 'new\s+mysqli\s*\(' "$FILE" | grep -v '\$' | head -1)
                                 if [ -n "$MYSQLI_LINE" ]; then
@@ -139,23 +157,19 @@ EOF
                                     TEMP_DB=$(echo "$ARGS" | awk -F',' '{print $4}' | tr -d ' "'"'"'')
                                 fi
                             fi
-
-                            if [ -n "$TEMP_DB" ]; then
-                                DETECTED_DB="$TEMP_DB"
-                                break
-                            fi
+                            if [ -n "$TEMP_DB" ]; then DETECTED_DB="$TEMP_DB"; break; fi
                         done <<< "$FOUND_FILES"
                     fi
 
                     if [ -n "$DETECTED_DB" ]; then
-                        echo -e "${GREEN}[+] Detective found SaaS Database Name in your code: ${CYAN}$DETECTED_DB${RESET}"
+                        echo -e "${GREEN}[+] Detected SaaS Database: ${CYAN}$DETECTED_DB${RESET}"
                         read -p "Press Enter to use '$DETECTED_DB' OR type a new name: " NEW_DB_NAME
                         [ -z "$NEW_DB_NAME" ] && NEW_DB_NAME="$DETECTED_DB"
                     else
-                        read -p "Could not auto-detect. Enter a Database Name for this project: " NEW_DB_NAME
+                        read -p "Could not auto-detect. Enter a Database Name: " NEW_DB_NAME
                     fi
                     
-                    echo -e "${GREEN}[*] Creating Database '$NEW_DB_NAME' & Applying 'DEFINER' fix...${RESET}"
+                    echo -e "${GREEN}[*] Creating Database & Applying fixes...${RESET}"
                     sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`$NEW_DB_NAME\`;"
                     sudo mysql -e "GRANT ALL PRIVILEGES ON \`$NEW_DB_NAME\`.* TO 'admin'@'localhost'; FLUSH PRIVILEGES;"
                     
@@ -170,12 +184,10 @@ EOF
                         echo -e "${GREEN}[+] Database '$NEW_DB_NAME' Restored Successfully!${RESET}"
                         sudo rm "/var/www/html/$NEW_DIR/database_backup.sql"
                     else
-                        echo -e "${RED}[-] Error restoring database. Check your SQL file.${RESET}"
+                        echo -e "${RED}[-] Error restoring DB. Check SQL file.${RESET}"
                     fi
                 fi
-
                 echo -e "${GREEN}[+] SaaS Installed! Link: http://YOUR_IP/$NEW_DIR ${RESET}"
-                echo -e "${CYAN}[!] Note: Add new schools (tenants) from the Super Admin Panel!${RESET}"
             else
                 echo -e "${RED}[-] Invalid Link!${RESET}"
             fi
@@ -220,7 +232,6 @@ EOF
             
         8)
             echo -e "\n${YELLOW}[*] INSTALL & SETUP RCLONE${RESET}"
-            command -v rclone &> /dev/null || (curl https://rclone.org/install.sh | sudo bash)
             rclone config
             read -p "Press Enter to return..."
             ;;
@@ -273,7 +284,6 @@ EOF
             read -p "Enter Target User ID/Email/Mobile: " TARGET_ID
             read -p "Enter New Password: " NEW_PASS
             
-            # Auto detect matching column for ID (id, email, or mobile)
             sudo mysql -e "USE \`$TARGET_DB\`; UPDATE \`$TARGET_TBL\` SET password='$NEW_PASS' WHERE email='$TARGET_ID' OR admin_mobile='$TARGET_ID' OR id='$TARGET_ID';" 2>/dev/null
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}[+] Password Updated!${RESET}"
@@ -507,46 +517,57 @@ EOF
             ;;
 
         15)
-            echo -e "\n${MAGENTA}[*] ☁️ AUTO DB RESTORE (Fresh OR Merge/Update)${RESET}"
-            read -p "Enter GDrive Share Link of your SQL file: " LINK
+            echo -e "\n${MAGENTA}[*] 🚑 1-CLICK DISASTER RECOVERY (Auto Backup Restore)${RESET}"
+            read -p "Enter GDrive Share Link of your ZIP backup: " LINK
             FILE_ID=$(echo "$LINK" | sed -E 's/.*\/d\/([a-zA-Z0-9_-]+).*/\1/')
-            if [ -z "$FILE_ID" ]; then
-                echo -e "${RED}[-] Invalid Link!${RESET}"
-            else
-                read -p "Enter Target Database Name (e.g. codexaum_erp): " TARGET_DB
-                echo -e "${GREEN}[*] Downloading SQL from GDrive...${RESET}"
-                sudo wget -qO /tmp/downloaded_db.sql "https://drive.google.com/uc?export=download&id=$FILE_ID"
+            
+            if [ -n "$FILE_ID" ]; then
+                read -p "Enter Target Project Folder (e.g. codexaum): " NEW_DIR
+                sudo mkdir -p /var/www/html/$NEW_DIR
                 
-                echo -e "${YELLOW}[*] Applying SAFE MAGIC FIX: Removing 'DEFINER' errors...${RESET}"
-                sudo sed -i '/^\/\*/s/DEFINER=[^*]*\*/\*/g' /tmp/downloaded_db.sql
-                sudo sed -i '/^CREATE/s/DEFINER=[^ ]* //g' /tmp/downloaded_db.sql
-                sudo sed -i '/^CREATE/s/DEFINER=\`[^\`]*\`@\`[^\`]*\` //g' /tmp/downloaded_db.sql
-                
-                echo -e "${GREEN}[*] Creating Database (If not exists)...${RESET}"
-                sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`$TARGET_DB\`;"
-                sudo mysql -e "GRANT ALL PRIVILEGES ON \`$TARGET_DB\`.* TO 'admin'@'localhost'; FLUSH PRIVILEGES;"
-                
-                echo -e "${CYAN}-----------------------------------------------------${RESET}"
-                echo -e "${MAGENTA}Select Restore Mode:${RESET}"
-                echo -e "${GREEN}1) 🟢 Fresh Restore (Standard, strict error checking)${RESET}"
-                echo -e "${YELLOW}2) 🟡 Update/Merge Mode (Forces import, skips existing tables & duplicate data)${RESET}"
-                echo -e "${CYAN}-----------------------------------------------------${RESET}"
-                read -p "Choose Mode [1-2]: " RESTORE_MODE
-
-                if [ "$RESTORE_MODE" == "2" ]; then
-                    echo -e "${YELLOW}[*] Merging DB with --force... (Ignoring existing table errors)${RESET}"
-                    sudo mysql --force "$TARGET_DB" < /tmp/downloaded_db.sql 2>/dev/null
-                    echo -e "${GREEN}[+] Database Successfully Merged to '$TARGET_DB'!${RESET}"
+                echo -e "${GREEN}[*] Downloading Large Backup from GDrive...${RESET}"
+                sudo wget -q --save-cookies /tmp/cookies.txt --keep-session-cookies --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O- | sed -rn 's/.*confirm=([0-9A-Za-z_]+).*/\1\n/p' > /tmp/confirm.txt
+                CONFIRM=$(cat /tmp/confirm.txt)
+                if [ -n "$CONFIRM" ]; then
+                    sudo wget -q --load-cookies /tmp/cookies.txt "https://docs.google.com/uc?export=download&confirm=$CONFIRM&id=$FILE_ID" -O /tmp/disaster_recovery.zip
                 else
-                    echo -e "${GREEN}[*] Importing DB normally...${RESET}"
-                    sudo mysql "$TARGET_DB" < /tmp/downloaded_db.sql
-                    if [ $? -eq 0 ]; then
-                        echo -e "${GREEN}[+] Database Successfully Restored to '$TARGET_DB'!${RESET}"
-                    else
-                        echo -e "${RED}[-] Error during import! Please check your file or use Merge Mode.${RESET}"
-                    fi
+                    sudo wget -q --no-check-certificate "https://docs.google.com/uc?export=download&id=$FILE_ID" -O /tmp/disaster_recovery.zip
                 fi
-                sudo rm /tmp/downloaded_db.sql
+                sudo rm -f /tmp/cookies.txt /tmp/confirm.txt
+                
+                if ! unzip -t /tmp/disaster_recovery.zip &> /dev/null; then
+                    echo -e "${RED}[-] ERROR: Download failed! Link must be 'Anyone with the link can view'.${RESET}"
+                    sudo rm -f /tmp/disaster_recovery.zip
+                    read -p "Press Enter to return..."
+                    continue
+                fi
+                
+                echo -e "${GREEN}[*] Extracting files...${RESET}"
+                sudo unzip -q -o /tmp/disaster_recovery.zip -d /var/www/html/$NEW_DIR
+                sudo rm -f /tmp/disaster_recovery.zip
+                
+                sudo chown -R $USER:www-data /var/www/html/$NEW_DIR
+                sudo chmod -R 775 /var/www/html/$NEW_DIR
+                
+                if [ -f "/var/www/html/$NEW_DIR/database_backup.sql" ]; then
+                    read -p "Enter the Database Name to Restore Into (e.g. codexaum_erp): " TARGET_DB
+                    
+                    echo -e "${GREEN}[*] Creating Database & Applying 'DEFINER' fixes...${RESET}"
+                    sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`$TARGET_DB\`;"
+                    sudo mysql -e "GRANT ALL PRIVILEGES ON \`$TARGET_DB\`.* TO 'admin'@'localhost'; FLUSH PRIVILEGES;"
+                    
+                    sudo sed -i '/^\/\*/s/DEFINER=[^*]*\*/\*/g' /var/www/html/$NEW_DIR/database_backup.sql
+                    sudo sed -i '/^CREATE/s/DEFINER=[^ ]* //g' /var/www/html/$NEW_DIR/database_backup.sql
+                    sudo sed -i '/^CREATE/s/DEFINER=\`[^\`]*\`@\`[^\`]*\` //g' /var/www/html/$NEW_DIR/database_backup.sql
+                    
+                    echo -e "${YELLOW}[*] Merging DB with --force... (Ignoring existing table errors)${RESET}"
+                    sudo mysql --force "$TARGET_DB" < /var/www/html/$NEW_DIR/database_backup.sql 2>/dev/null
+                    echo -e "${GREEN}[+] Database Successfully Restored!${RESET}"
+                    sudo rm -f /var/www/html/$NEW_DIR/database_backup.sql
+                fi
+                echo -e "${GREEN}[+] Disaster Recovery Complete! Project is LIVE again.${RESET}"
+            else
+                echo -e "${RED}[-] Invalid Link!${RESET}"
             fi
             read -p "Press Enter to return..."
             ;;
@@ -554,81 +575,12 @@ EOF
         16)
             echo -e "\n${YELLOW}[*] 🕵️‍♂️ DB CREDENTIAL FINDER${RESET}"
             ls -d /var/www/html/*/ | awk -F/ '{print "- " $(NF-1)}' 2>/dev/null
-            read -p "Enter project folder name to search (e.g. codexaum): " PROJ_DIR
-
-            if [ ! -d "/var/www/html/$PROJ_DIR" ]; then
-                echo -e "${RED}[-] Folder not found!${RESET}"
-                read -p "Press Enter to return..."
-                continue
-            fi
-
-            echo -e "${GREEN}[*] Deep Scanning project: $PROJ_DIR ...${RESET}\n"
-            FOUND_FILES=$(find /var/www/html/$PROJ_DIR -type f \( -name "*.php" -o -name "*.env" \) 2>/dev/null)
-
-            if [ -z "$FOUND_FILES" ]; then
-                echo -e "${RED}[-] No PHP/ENV files found in this project!${RESET}"
-                read -p "Press Enter to return..."
-                continue
-            fi
-
-            SHOWN=0
-            while IFS= read -r FILE; do
-                DB_HOST=""
-                DB_USER=""
-                DB_PASS=""
-                DB_NAME=""
-
-                [ -z "$DB_HOST" ] && DB_HOST=$(grep -iP '^\s*\$(servername|db_host|dbhost|host)\s*=\s*' "$FILE" | grep -oP "(?<=[\"'])[^\"']+(?=[\"'])" | grep -v "^$" | tail -1)
-                [ -z "$DB_USER" ] && DB_USER=$(grep -iP '^\s*\$(username|db_user|dbuser|user)\s*=\s*' "$FILE" | grep -oP "(?<=[\"'])[^\"']+(?=[\"'])" | grep -v "^$" | tail -1)
-                [ -z "$DB_PASS" ] && DB_PASS=$(grep -iP '^\s*\$(password|db_pass|dbpass|pass)\s*=\s*' "$FILE" | grep -oP "(?<=[\"'])[^\"']+(?=[\"'])" | grep -v "^$" | tail -1)
-                [ -z "$DB_NAME" ] && DB_NAME=$(grep -iP '^\s*\$(dbname|db_name|database|db)\s*=\s*' "$FILE" | grep -oP "(?<=[\"'])[^\"']+(?=[\"'])" | grep -v "^$" | tail -1)
-
-                MYSQLI_LINE=$(grep -iP 'new\s+mysqli\s*\(' "$FILE" | grep -v '\$' | head -1)
-                if [ -n "$MYSQLI_LINE" ]; then
-                    ARGS=$(echo "$MYSQLI_LINE" | grep -oP "(?<=mysqli\()[^)]+")
-                    [ -z "$DB_HOST" ] && DB_HOST=$(echo "$ARGS" | awk -F',' '{print $1}' | tr -d ' "'"'"'')
-                    [ -z "$DB_USER" ] && DB_USER=$(echo "$ARGS" | awk -F',' '{print $2}' | tr -d ' "'"'"'')
-                    [ -z "$DB_PASS" ] && DB_PASS=$(echo "$ARGS" | awk -F',' '{print $3}' | tr -d ' "'"'"'')
-                    [ -z "$DB_NAME" ] && DB_NAME=$(echo "$ARGS" | awk -F',' '{print $4}' | tr -d ' "'"'"'')
-                fi
-
-                if [ -n "$DB_HOST" ] || [ -n "$DB_USER" ] || [ -n "$DB_PASS" ] || [ -n "$DB_NAME" ]; then
-                    SHOWN=$((SHOWN+1))
-                    SHORT_FILE="${FILE#/var/www/html/$PROJ_DIR/}"
-                    echo -e "${MAGENTA}📄 Config File : ${CYAN}$SHORT_FILE${RESET}"
-                    echo -e "${BLUE}=====================================================${RESET}"
-                    [ -n "$DB_HOST" ] && echo -e "  🌐 Host      : ${GREEN}$DB_HOST${RESET}" || echo -e "  🌐 Host      : ${RED}Not Found${RESET}"
-                    [ -n "$DB_NAME" ] && echo -e "  🗄️  Database  : ${GREEN}$DB_NAME${RESET}" || echo -e "  🗄️  Database  : ${RED}Not Found${RESET}"
-                    [ -n "$DB_USER" ] && echo -e "  👤 Username  : ${GREEN}$DB_USER${RESET}" || echo -e "  👤 Username  : ${RED}Not Found${RESET}"
-                    [ -n "$DB_PASS" ] && echo -e "  🔑 Password  : ${GREEN}$DB_PASS${RESET}" || echo -e "  🔑 Password  : ${RED}Not Found${RESET}"
-                    echo -e "${BLUE}-----------------------------------------------------${RESET}"
-                    if [ -n "$DB_HOST" ] && [ -n "$DB_USER" ] && [ -n "$DB_NAME" ]; then
-                        echo -e "  🔌 Testing Live DB Connection..."
-                        if sudo mysql -h"$DB_HOST" -u"$DB_USER" -p"$DB_PASS" "$DB_NAME" -e ";" 2>/dev/null; then
-                            echo -e "  ✅ ${GREEN}Connection SUCCESS! DB is LIVE.${RESET}"
-                        else
-                            echo -e "  ❌ ${RED}Connection FAILED!${RESET}"
-                        fi
-                    fi
-                    echo -e "${BLUE}=====================================================${RESET}\n"
-                fi
-            done <<< "$FOUND_FILES"
-
-            if [ "$SHOWN" -eq 0 ]; then
-                echo -e "${RED}[-] No credentials found.${RESET}"
+            read -p "Enter project folder name to search: " PROJ_DIR
+            if [ -d "/var/www/html/$PROJ_DIR" ]; then
+                echo -e "${GREEN}[*] Scanning config files...${RESET}\n"
+                grep -riE 'DB_HOST|DB_USER|DB_PASS|DB_NAME|\$db_name|\$username' /var/www/html/$PROJ_DIR/ | grep -v 'vendor' | head -n 15
             else
-                echo -e "${GREEN}[+] Total $SHOWN config file(s) found.${RESET}"
-                echo -e "\n${YELLOW}Do you want to EDIT any of these files to update passwords?${RESET}"
-                read -p "Type 'y' to open editor, or 'n' to go back: " EDIT_CONFIRM
-                if [[ "$EDIT_CONFIRM" == "y" || "$EDIT_CONFIRM" == "Y" ]]; then
-                    read -p "Copy and Paste the EXACT File path from above (e.g. db_connect.php): " FILE_TO_EDIT
-                    if [ -f "/var/www/html/$PROJ_DIR/$FILE_TO_EDIT" ]; then
-                        nano "/var/www/html/$PROJ_DIR/$FILE_TO_EDIT"
-                        echo -e "${GREEN}[+] File Saved Successfully!${RESET}"
-                    else
-                        echo -e "${RED}[-] File not found. Make sure you typed the exact name.${RESET}"
-                    fi
-                fi
+                echo -e "${RED}[-] Folder not found!${RESET}"
             fi
             read -p "Press Enter to return..."
             ;;
